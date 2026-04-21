@@ -31,6 +31,7 @@
 
 #include "../misc.h"
 #include "../types.h"
+#include "layers/router.h"
 #include "nnue_accumulator.h"
 #include "nnue_architecture.h"
 #include "nnue_common.h"
@@ -104,13 +105,17 @@ class Network {
     // Evaluation function
     Arch network[LayerStacks];
 
+    // Router for dynamic layer stack selection (uint8 slice -> argmax)
+    Layers::Router<64, 8> router;
+
     EvalFile         evalFile;
     EmbeddedNNUEType embeddedType;
 
     bool initialized = false;
 
     // Hash value of evaluation function structure
-    static constexpr std::uint32_t hash = Transformer::get_hash_value() ^ Arch::get_hash_value();
+    static constexpr std::uint32_t hash = Transformer::get_hash_value() ^ Arch::get_hash_value()
+                                        ^ Layers::Router<64, 8>::get_hash_value(0);
 
     template<IndexType Size>
     friend struct AccumulatorCaches::Cache;

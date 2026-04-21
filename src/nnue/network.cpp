@@ -198,9 +198,17 @@ Network<Arch, Transformer>::evaluate(const Position&                         pos
 
     ASSERT_ALIGNED(transformedFeatures, alignment);
 
-    const int  bucket = (pos.count<ALL_PIECES>() - 1) / 4;
-    const auto psqt =
-      featureTransformer.transform(pos, accumulatorStack, cache, transformedFeatures, bucket);
+    accumulatorStack.evaluate(pos, featureTransformer, cache);
+    featureTransformer.pack_features(accumulatorStack, pos.side_to_move(), transformedFeatures);
+
+    const int bucket = [&]() {
+        if constexpr (FTDimensions == TransformedFeatureDimensionsBig)
+            return static_cast<int>(router.propagate(transformedFeatures));
+        else
+            return (pos.count<ALL_PIECES>() - 1) / 4;
+    }();
+
+    const auto psqt = featureTransformer.compute_psqt(accumulatorStack, bucket, pos.side_to_move());
     const auto positional = network[bucket].propagate(transformedFeatures);
     return {static_cast<Value>(psqt / OutputScale), static_cast<Value>(positional / OutputScale)};
 }
@@ -237,7 +245,7 @@ void Network<Arch, Transformer>::verify(std::string                             
 
     if (f)
     {
-        size_t size = sizeof(featureTransformer) + sizeof(Arch) * LayerStacks;
+        size_t size = sizeof(featureTransformer) + sizeof(router) + sizeof(Arch) * LayerStacks;
         f("NNUE evaluation using " + evalfilePath + " (" + std::to_string(size / (1024 * 1024))
           + "MiB, (" + std::to_string(featureTransformer.TotalInputDimensions) + ", "
           + std::to_string(network[0].TransformedFeatureDimensions) + ", "
@@ -260,12 +268,15 @@ Network<Arch, Transformer>::trace_evaluate(const Position&                      
 
     ASSERT_ALIGNED(transformedFeatures, alignment);
 
+    accumulatorStack.evaluate(pos, featureTransformer, cache);
+    featureTransformer.pack_features(accumulatorStack, pos.side_to_move(), transformedFeatures);
+
     NnueEvalTrace t{};
     t.correctBucket = (pos.count<ALL_PIECES>() - 1) / 4;
     for (IndexType bucket = 0; bucket < LayerStacks; ++bucket)
     {
         const auto materialist =
-          featureTransformer.transform(pos, accumulatorStack, cache, transformedFeatures, bucket);
+          featureTransformer.compute_psqt(accumulatorStack, bucket, pos.side_to_move());
         const auto positional = network[bucket].propagate(transformedFeatures);
 
         t.psqt[bucket]       = static_cast<Value>(materialist / OutputScale);
@@ -350,6 +361,7 @@ std::size_t Network<Arch, Transformer>::get_content_hash() const {
 
     std::size_t h = 0;
     hash_combine(h, featureTransformer);
+    hash_combine(h, router);
     for (auto&& layerstack : network)
         hash_combine(h, layerstack);
     hash_combine(h, evalFile);
@@ -398,6 +410,8 @@ bool Network<Arch, Transformer>::read_parameters(std::istream& stream,
         return false;
     if (!Detail::read_parameters(stream, featureTransformer))
         return false;
+    if (!router.read_parameters(stream))
+        return false;
     for (std::size_t i = 0; i < LayerStacks; ++i)
     {
         if (!Detail::read_parameters(stream, network[i]))
@@ -413,6 +427,8 @@ bool Network<Arch, Transformer>::write_parameters(std::ostream&      stream,
     if (!write_header(stream, Network::hash, netDescription))
         return false;
     if (!Detail::write_parameters(stream, featureTransformer))
+        return false;
+    if (!router.write_parameters(stream))
         return false;
     for (std::size_t i = 0; i < LayerStacks; ++i)
     {

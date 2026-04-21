@@ -232,35 +232,17 @@ class FeatureTransformer {
         return h;
     }
 
-    // Convert input features
-    std::int32_t transform(const Position&                           pos,
-                           AccumulatorStack&                         accumulatorStack,
-                           AccumulatorCaches::Cache<HalfDimensions>& cache,
-                           OutputType*                               output,
-                           int                                       bucket) const {
-
+    // Pack accumulator state into the uint8 feature buffer used by the hidden layers.
+    // The accumulator must already be fresh (call accumulatorStack.evaluate() first).
+    void
+    pack_features(const AccumulatorStack& accumulatorStack, Color stm, OutputType* output) const {
         using namespace SIMD;
-        accumulatorStack.evaluate(pos, *this, cache);
+
         const auto& accumulatorState       = accumulatorStack.latest<PSQFeatureSet>();
         const auto& threatAccumulatorState = accumulatorStack.latest<ThreatFeatureSet>();
 
-        const Color perspectives[2]  = {pos.side_to_move(), ~pos.side_to_move()};
-        const auto& psqtAccumulation = (accumulatorState.acc<HalfDimensions>()).psqtAccumulation;
-        auto        psqt =
-          (psqtAccumulation[perspectives[0]][bucket] - psqtAccumulation[perspectives[1]][bucket]);
-
-        if constexpr (UseThreats)
-        {
-            const auto& threatPsqtAccumulation =
-              (threatAccumulatorState.acc<HalfDimensions>()).psqtAccumulation;
-            psqt = (psqt + threatPsqtAccumulation[perspectives[0]][bucket]
-                    - threatPsqtAccumulation[perspectives[1]][bucket])
-                 / 2;
-        }
-        else
-            psqt /= 2;
-
-        const auto& accumulation = (accumulatorState.acc<HalfDimensions>()).accumulation;
+        const Color perspectives[2] = {stm, ~stm};
+        const auto& accumulation    = (accumulatorState.acc<HalfDimensions>()).accumulation;
         const auto& threatAccumulation =
           (threatAccumulatorState.acc<HalfDimensions>()).accumulation;
 
@@ -408,9 +390,31 @@ class FeatureTransformer {
 
 #endif
         }
+    }
+
+    // Compute PSQT scalar for a given bucket.
+    // The accumulator must already be fresh (call accumulatorStack.evaluate() first).
+    std::int32_t
+    compute_psqt(const AccumulatorStack& accumulatorStack, int bucket, Color stm) const {
+        const auto& accumulatorState       = accumulatorStack.latest<PSQFeatureSet>();
+        const auto& threatAccumulatorState = accumulatorStack.latest<ThreatFeatureSet>();
+
+        const auto& psqtAccumulation = (accumulatorState.acc<HalfDimensions>()).psqtAccumulation;
+        auto        psqt = (psqtAccumulation[stm][bucket] - psqtAccumulation[~stm][bucket]);
+
+        if constexpr (UseThreats)
+        {
+            const auto& threatPsqtAccumulation =
+              (threatAccumulatorState.acc<HalfDimensions>()).psqtAccumulation;
+            psqt =
+              (psqt + threatPsqtAccumulation[stm][bucket] - threatPsqtAccumulation[~stm][bucket])
+              / 2;
+        }
+        else
+            psqt /= 2;
 
         return psqt;
-    }  // end of function transform()
+    }
 
     alignas(CacheLineSize) std::array<BiasType, HalfDimensions> biases;
     alignas(CacheLineSize) std::array<WeightType, HalfDimensions * InputDimensions> weights;

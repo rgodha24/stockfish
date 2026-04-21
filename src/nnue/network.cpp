@@ -361,7 +361,8 @@ std::size_t Network<Arch, Transformer>::get_content_hash() const {
 
     std::size_t h = 0;
     hash_combine(h, featureTransformer);
-    hash_combine(h, router);
+    if constexpr (FTDimensions == TransformedFeatureDimensionsBig)
+        hash_combine(h, router);
     for (auto&& layerstack : network)
         hash_combine(h, layerstack);
     hash_combine(h, evalFile);
@@ -410,8 +411,11 @@ bool Network<Arch, Transformer>::read_parameters(std::istream& stream,
         return false;
     if (!Detail::read_parameters(stream, featureTransformer))
         return false;
-    if (!router.read_parameters(stream))
-        return false;
+    if constexpr (FTDimensions == TransformedFeatureDimensionsBig)
+    {
+        if (!router.read_parameters(stream))
+            return false;
+    }
     for (std::size_t i = 0; i < LayerStacks; ++i)
     {
         if (!Detail::read_parameters(stream, network[i]))
@@ -428,8 +432,11 @@ bool Network<Arch, Transformer>::write_parameters(std::ostream&      stream,
         return false;
     if (!Detail::write_parameters(stream, featureTransformer))
         return false;
-    if (!router.write_parameters(stream))
-        return false;
+    if constexpr (FTDimensions == TransformedFeatureDimensionsBig)
+    {
+        if (!router.write_parameters(stream))
+            return false;
+    }
     for (std::size_t i = 0; i < LayerStacks; ++i)
     {
         if (!Detail::write_parameters(stream, network[i]))

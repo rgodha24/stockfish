@@ -201,7 +201,11 @@ Network<Arch, Transformer>::evaluate(const Position&                         pos
     accumulatorStack.evaluate(pos, featureTransformer, cache);
     featureTransformer.pack_features(accumulatorStack, pos.side_to_move(), transformedFeatures);
 
-    const int bucket = [&]() -> int {
+    const int psqtBucket = [&]() -> int {
+        return (pos.count<ALL_PIECES>() - 1) / 4;
+    }();
+
+    const int networkBucket = [&]() -> int {
         if constexpr (FTDimensions == TransformedFeatureDimensionsBig)
         {
             if constexpr (UsesMoeRouter)
@@ -209,16 +213,16 @@ Network<Arch, Transformer>::evaluate(const Position&                         pos
             else if constexpr (UsesFixedBucket)
                 return 0;
             else
-                return (pos.count<ALL_PIECES>() - 1) / 4;
+                return psqtBucket;
         }
         else
         {
-            return (pos.count<ALL_PIECES>() - 1) / 4;
+            return psqtBucket;
         }
     }();
 
-    const auto psqt = featureTransformer.compute_psqt(accumulatorStack, bucket, pos.side_to_move());
-    const auto positional = network[bucket].propagate(transformedFeatures);
+    const auto psqt = featureTransformer.compute_psqt(accumulatorStack, psqtBucket, pos.side_to_move());
+    const auto positional = network[networkBucket].propagate(transformedFeatures);
     return {static_cast<Value>(psqt / OutputScale), static_cast<Value>(positional / OutputScale)};
 }
 
@@ -284,6 +288,8 @@ Network<Arch, Transformer>::trace_evaluate(const Position&                      
     featureTransformer.pack_features(accumulatorStack, pos.side_to_move(), transformedFeatures);
 
     NnueEvalTrace t{};
+    const auto psqtBucket = static_cast<std::size_t>((pos.count<ALL_PIECES>() - 1) / 4);
+
     if constexpr (FTDimensions == TransformedFeatureDimensionsBig)
     {
         if constexpr (UsesMoeRouter)
@@ -297,23 +303,27 @@ Network<Arch, Transformer>::trace_evaluate(const Position&                      
     {
         t.correctBucket = (pos.count<ALL_PIECES>() - 1) / 4;
     }
-    for (IndexType bucket = 0; bucket < ActiveLayerStacks; ++bucket)
+
+    for (IndexType bucket = 0; bucket < LayerStacks; ++bucket)
     {
-        const auto materialist =
-          featureTransformer.compute_psqt(accumulatorStack, bucket, pos.side_to_move());
-        const auto positional = network[bucket].propagate(transformedFeatures);
+        const auto materialist = featureTransformer.compute_psqt(accumulatorStack, bucket, pos.side_to_move());
+        const auto positional =
+          network[(FTDimensions == TransformedFeatureDimensionsBig && UsesFixedBucket) ? 0 : bucket]
+            .propagate(transformedFeatures);
 
         t.psqt[bucket]       = static_cast<Value>(materialist / OutputScale);
         t.positional[bucket] = static_cast<Value>(positional / OutputScale);
     }
 
-    if constexpr (FTDimensions == TransformedFeatureDimensionsBig && UsesFixedBucket)
+    if constexpr (FTDimensions == TransformedFeatureDimensionsBig && UsesMoeRouter)
     {
-        for (IndexType bucket = 1; bucket < LayerStacks; ++bucket)
-        {
-            t.psqt[bucket]       = t.psqt[0];
+        for (IndexType bucket = 0; bucket < LayerStacks; ++bucket)
+            t.psqt[bucket] = t.psqt[psqtBucket];
+    }
+    else if constexpr (FTDimensions == TransformedFeatureDimensionsBig && UsesFixedBucket)
+    {
+        for (IndexType bucket = 0; bucket < LayerStacks; ++bucket)
             t.positional[bucket] = t.positional[0];
-        }
     }
 
     return t;

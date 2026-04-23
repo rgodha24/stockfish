@@ -164,27 +164,7 @@ class FeatureTransformer {
             read_little_endian<ThreatWeightType>(stream, threatWeights.data(),
                                                  ThreatInputDimensions * HalfDimensions);
             read_leb_128(stream, weights);
-
-            if constexpr (UsesFixedBucket)
-            {
-                // Fixed-bucket big nets store one combined PSQT bucket on disk.
-                auto combinedPsqtSingle =
-                  std::make_unique<std::array<PSQTWeightType, TotalInputDimensions>>();
-                read_leb_128(stream, *combinedPsqtSingle);
-
-                for (std::size_t b = 0; b < PSQTBuckets; ++b)
-                    for (std::size_t i = 0; i < ThreatInputDimensions; ++i)
-                        threatPsqtWeights[i * PSQTBuckets + b] = (*combinedPsqtSingle)[i];
-
-                for (std::size_t b = 0; b < PSQTBuckets; ++b)
-                    for (std::size_t i = 0; i < InputDimensions; ++i)
-                        psqtWeights[i * PSQTBuckets + b] =
-                          (*combinedPsqtSingle)[ThreatInputDimensions + i];
-            }
-            else
-            {
-                read_leb_128(stream, threatPsqtWeights, psqtWeights);
-            }
+            read_leb_128(stream, threatPsqtWeights, psqtWeights);
         }
         else
         {
@@ -211,33 +191,18 @@ class FeatureTransformer {
                                                   ThreatInputDimensions * HalfDimensions);
             write_leb_128<WeightType>(stream, copy->weights);
 
-            if constexpr (UsesFixedBucket)
-            {
-                // Fixed-bucket big nets write one combined PSQT bucket.
-                auto combinedPsqtSingle =
-                  std::make_unique<std::array<PSQTWeightType, TotalInputDimensions>>();
-                for (std::size_t i = 0; i < ThreatInputDimensions; ++i)
-                    (*combinedPsqtSingle)[i] = copy->threatPsqtWeights[i * PSQTBuckets + 0];
-                for (std::size_t i = 0; i < InputDimensions; ++i)
-                    (*combinedPsqtSingle)[ThreatInputDimensions + i] =
-                      copy->psqtWeights[i * PSQTBuckets + 0];
-                write_leb_128<PSQTWeightType>(stream, *combinedPsqtSingle);
-            }
-            else
-            {
-                auto combinedPsqtWeights = std::make_unique<
-                  std::array<PSQTWeightType, TotalInputDimensions * PSQTBuckets>>();
+            auto combinedPsqtWeights = std::make_unique<
+              std::array<PSQTWeightType, TotalInputDimensions * PSQTBuckets>>();
 
-                std::copy(std::begin(copy->threatPsqtWeights),
-                          std::begin(copy->threatPsqtWeights) + ThreatInputDimensions * PSQTBuckets,
-                          combinedPsqtWeights->begin());
+            std::copy(std::begin(copy->threatPsqtWeights),
+                      std::begin(copy->threatPsqtWeights) + ThreatInputDimensions * PSQTBuckets,
+                      combinedPsqtWeights->begin());
 
-                std::copy(std::begin(copy->psqtWeights),
-                          std::begin(copy->psqtWeights) + InputDimensions * PSQTBuckets,
-                          combinedPsqtWeights->begin() + ThreatInputDimensions * PSQTBuckets);
+            std::copy(std::begin(copy->psqtWeights),
+                      std::begin(copy->psqtWeights) + InputDimensions * PSQTBuckets,
+                      combinedPsqtWeights->begin() + ThreatInputDimensions * PSQTBuckets);
 
-                write_leb_128<PSQTWeightType>(stream, *combinedPsqtWeights);
-            }
+            write_leb_128<PSQTWeightType>(stream, *combinedPsqtWeights);
         }
         else
         {

@@ -12,10 +12,25 @@ if [ -z "$sha256sum" ]; then
 fi
 
 get_nnue_filename() {
-  grep "$1" evaluate.h | grep "#define" | sed "s/.*\(nn-[a-z0-9]\{12\}.nnue\).*/\1/"
+  sed -n "s/^#define[[:space:]]\+$1[[:space:]]\+\"\([^\"]*\)\"/\1/p" evaluate.h | head -n 1
+}
+
+is_hashed_network() {
+  case "$1" in
+    nn-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].nnue)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 validate_network() {
+  if ! is_hashed_network "$1"; then
+    return 0
+  fi
+
   # If no sha256sum command is available, assume the file is always valid.
   if [ -n "$sha256sum" ] && [ -f "$1" ]; then
     if [ "$1" != "nn-$($sha256sum "$1" | cut -c 1-12).nnue" ]; then
@@ -30,6 +45,18 @@ fetch_network() {
 
   if [ -z "$_filename" ]; then
     >&2 echo "NNUE file name not found for: $1"
+    return 1
+  fi
+
+  if ! is_hashed_network "$_filename"; then
+    if [ -f "$_filename" ]; then
+      echo "Using local custom NNUE $_filename"
+      return 0
+    fi
+
+    >&2 printf "%s\n" \
+      "Missing required custom NNUE: $_filename" \
+      "Place it in $(pwd) before building with STACKS=${STACKS:-layer}."
     return 1
   fi
 
@@ -74,5 +101,17 @@ fetch_network() {
   return 1
 }
 
-fetch_network EvalFileDefaultNameBig &&
+case "${STACKS:-layer}" in
+  moe)
+    big_macro=EvalFileDefaultNameBigMoe
+    ;;
+  none)
+    big_macro=EvalFileDefaultNameBigNone
+    ;;
+  *)
+    big_macro=EvalFileDefaultNameBigLayer
+    ;;
+esac
+
+fetch_network "$big_macro" &&
   fetch_network EvalFileDefaultNameSmall

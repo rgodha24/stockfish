@@ -201,11 +201,20 @@ Network<Arch, Transformer>::evaluate(const Position&                         pos
     accumulatorStack.evaluate(pos, featureTransformer, cache);
     featureTransformer.pack_features(accumulatorStack, pos.side_to_move(), transformedFeatures);
 
-    const int bucket = [&]() {
+    const int bucket = [&]() -> int {
         if constexpr (FTDimensions == TransformedFeatureDimensionsBig)
-            return static_cast<int>(router.propagate(transformedFeatures));
+        {
+            if constexpr (UsesMoeRouter)
+                return static_cast<int>(router.propagate(transformedFeatures));
+            else if constexpr (UsesFixedBucket)
+                return 0;
+            else
+                return (pos.count<ALL_PIECES>() - 1) / 4;
+        }
         else
+        {
             return (pos.count<ALL_PIECES>() - 1) / 4;
+        }
     }();
 
     const auto psqt = featureTransformer.compute_psqt(accumulatorStack, bucket, pos.side_to_move());
@@ -245,7 +254,10 @@ void Network<Arch, Transformer>::verify(std::string                             
 
     if (f)
     {
-        size_t size = sizeof(featureTransformer) + sizeof(router) + sizeof(Arch) * LayerStacks;
+        size_t size =
+          sizeof(featureTransformer)
+          + (UsesMoeRouter && FTDimensions == TransformedFeatureDimensionsBig ? sizeof(router) : 0)
+          + sizeof(Arch) * ActiveLayerStacks;
         f("NNUE evaluation using " + evalfilePath + " (" + std::to_string(size / (1024 * 1024))
           + "MiB, (" + std::to_string(featureTransformer.TotalInputDimensions) + ", "
           + std::to_string(network[0].TransformedFeatureDimensions) + ", "
@@ -272,8 +284,20 @@ Network<Arch, Transformer>::trace_evaluate(const Position&                      
     featureTransformer.pack_features(accumulatorStack, pos.side_to_move(), transformedFeatures);
 
     NnueEvalTrace t{};
-    t.correctBucket = (pos.count<ALL_PIECES>() - 1) / 4;
-    for (IndexType bucket = 0; bucket < LayerStacks; ++bucket)
+    if constexpr (FTDimensions == TransformedFeatureDimensionsBig)
+    {
+        if constexpr (UsesMoeRouter)
+            t.correctBucket = router.propagate(transformedFeatures);
+        else if constexpr (UsesFixedBucket)
+            t.correctBucket = 0;
+        else
+            t.correctBucket = (pos.count<ALL_PIECES>() - 1) / 4;
+    }
+    else
+    {
+        t.correctBucket = (pos.count<ALL_PIECES>() - 1) / 4;
+    }
+    for (IndexType bucket = 0; bucket < ActiveLayerStacks; ++bucket)
     {
         const auto materialist =
           featureTransformer.compute_psqt(accumulatorStack, bucket, pos.side_to_move());
@@ -281,6 +305,15 @@ Network<Arch, Transformer>::trace_evaluate(const Position&                      
 
         t.psqt[bucket]       = static_cast<Value>(materialist / OutputScale);
         t.positional[bucket] = static_cast<Value>(positional / OutputScale);
+    }
+
+    if constexpr (FTDimensions == TransformedFeatureDimensionsBig && UsesFixedBucket)
+    {
+        for (IndexType bucket = 1; bucket < LayerStacks; ++bucket)
+        {
+            t.psqt[bucket]       = t.psqt[0];
+            t.positional[bucket] = t.positional[0];
+        }
     }
 
     return t;
@@ -361,7 +394,7 @@ std::size_t Network<Arch, Transformer>::get_content_hash() const {
 
     std::size_t h = 0;
     hash_combine(h, featureTransformer);
-    if constexpr (FTDimensions == TransformedFeatureDimensionsBig)
+    if constexpr (FTDimensions == TransformedFeatureDimensionsBig && UsesMoeRouter)
         hash_combine(h, router);
     for (auto&& layerstack : network)
         hash_combine(h, layerstack);
@@ -411,15 +444,24 @@ bool Network<Arch, Transformer>::read_parameters(std::istream& stream,
         return false;
     if (!Detail::read_parameters(stream, featureTransformer))
         return false;
-    if constexpr (FTDimensions == TransformedFeatureDimensionsBig)
+    if constexpr (FTDimensions == TransformedFeatureDimensionsBig && UsesMoeRouter)
     {
         if (!router.read_parameters(stream))
             return false;
     }
-    for (std::size_t i = 0; i < LayerStacks; ++i)
+    if constexpr (FTDimensions == TransformedFeatureDimensionsBig && UsesFixedBucket)
     {
-        if (!Detail::read_parameters(stream, network[i]))
+        // Fixed-bucket big nets only store a single FC stack on disk.
+        if (!Detail::read_parameters(stream, network[0]))
             return false;
+    }
+    else
+    {
+        for (std::size_t i = 0; i < ActiveLayerStacks; ++i)
+        {
+            if (!Detail::read_parameters(stream, network[i]))
+                return false;
+        }
     }
     return stream && stream.peek() == std::ios::traits_type::eof();
 }
@@ -432,15 +474,24 @@ bool Network<Arch, Transformer>::write_parameters(std::ostream&      stream,
         return false;
     if (!Detail::write_parameters(stream, featureTransformer))
         return false;
-    if constexpr (FTDimensions == TransformedFeatureDimensionsBig)
+    if constexpr (FTDimensions == TransformedFeatureDimensionsBig && UsesMoeRouter)
     {
         if (!router.write_parameters(stream))
             return false;
     }
-    for (std::size_t i = 0; i < LayerStacks; ++i)
+    if constexpr (FTDimensions == TransformedFeatureDimensionsBig && UsesFixedBucket)
     {
-        if (!Detail::write_parameters(stream, network[i]))
+        // Fixed-bucket big nets only write bucket 0.
+        if (!Detail::write_parameters(stream, network[0]))
             return false;
+    }
+    else
+    {
+        for (std::size_t i = 0; i < ActiveLayerStacks; ++i)
+        {
+            if (!Detail::write_parameters(stream, network[i]))
+                return false;
+        }
     }
     return bool(stream);
 }

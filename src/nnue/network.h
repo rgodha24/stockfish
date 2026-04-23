@@ -57,6 +57,8 @@ using NetworkOutput = std::tuple<Value, Value>;
 template<typename Arch, typename Transformer>
 class Network {
     static constexpr IndexType FTDimensions = Arch::TransformedFeatureDimensions;
+    static constexpr IndexType ActiveLayerStacks =
+      FTDimensions == TransformedFeatureDimensionsBig && UsesFixedBucket ? 1 : LayerStacks;
 
    public:
     Network(EvalFile file, EmbeddedNNUEType type) :
@@ -103,9 +105,11 @@ class Network {
     Transformer featureTransformer;
 
     // Evaluation function
-    Arch network[LayerStacks];
+    Arch network[ActiveLayerStacks];
 
-    // Router for dynamic layer stack selection (uint8 slice -> argmax)
+    // Router for dynamic layer stack selection (uint8 slice -> argmax).
+    // Only active when UsesMoeRouter is true; present in all modes so that
+    // template code can refer to it without #if guards inside functions.
     Layers::Router<64, 8> router;
 
     EvalFile         evalFile;
@@ -113,11 +117,13 @@ class Network {
 
     bool initialized = false;
 
-    // Hash value of evaluation function structure
+    // Hash value of evaluation function structure.
+    // Big-net hash includes the stack-mode salt so a binary only accepts
+    // nets that match its build-time mode.
     static constexpr std::uint32_t hash =
       Transformer::get_hash_value() ^ Arch::get_hash_value()
       ^ (FTDimensions == TransformedFeatureDimensionsBig
-           ? Layers::Router<64, 8>::get_hash_value(0)
+           ? ((UsesMoeRouter ? Layers::Router<64, 8>::get_hash_value(0) : 0) ^ StackModeHashSalt)
            : 0);
 
     template<IndexType Size>

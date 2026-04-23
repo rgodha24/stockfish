@@ -29,11 +29,22 @@ class Position;
 
 namespace Eval {
 
-// The default net name MUST follow the format nn-[SHA256 first 12 digits].nnue
-// for the build process (profile-build and fishtest) to work. Do not change the
-// name of the macro or the location where this macro is defined, as it is used
-// in the Makefile/Fishtest.
-#define EvalFileDefaultNameBig "nn-f68ec79f0fe3.nnue"
+// Official downloadable nets follow the format nn-[SHA256 first 12 digits].nnue.
+// Local stack-mode builds may instead point to custom net files that are
+// supplied manually at build time.
+#define EvalFileDefaultNameBigLayer "nn-f68ec79f0fe3.nnue"
+#define EvalFileDefaultNameBigMoe "nn-moe-big.nnue"
+#define EvalFileDefaultNameBigNone "nn-nonstacks-big.nnue"
+
+#if defined(NNUE_STACKS_NONE)
+    #define EvalFileDefaultNameBig EvalFileDefaultNameBigNone
+#elif defined(NNUE_STACKS_MOE)
+    #define EvalFileDefaultNameBig EvalFileDefaultNameBigMoe
+#elif defined(NNUE_STACKS_LAYER)
+    #define EvalFileDefaultNameBig EvalFileDefaultNameBigLayer
+#else
+    #define EvalFileDefaultNameBig EvalFileDefaultNameBigLayer
+#endif
 #define EvalFileDefaultNameSmall "nn-47fc8b7fff06.nnue"
 
 namespace NNUE {

@@ -54,8 +54,34 @@ using WeightType       = std::int16_t;
 using PSQTWeightType   = std::int32_t;
 using IndexType        = std::uint32_t;
 
+#if (defined(NNUE_STACKS_LAYER) + defined(NNUE_STACKS_MOE) + defined(NNUE_STACKS_NONE)) > 1
+    #error Exactly one NNUE_STACKS_* mode may be defined.
+#endif
+
+enum class StackMode : std::uint8_t {
+    Layer,
+    Moe,
+    None,
+};
+
+#if defined(NNUE_STACKS_NONE)
+inline constexpr StackMode ActiveStackMode = StackMode::None;
+#elif defined(NNUE_STACKS_MOE)
+inline constexpr StackMode ActiveStackMode = StackMode::Moe;
+#else
+inline constexpr StackMode ActiveStackMode = StackMode::Layer;
+#endif
+
+inline constexpr bool UsesMoeRouter   = ActiveStackMode == StackMode::Moe;
+inline constexpr bool UsesFixedBucket = ActiveStackMode == StackMode::None;
+
+// None-mode uses a custom big-net layout (single FC stack on disk, fixed bucket
+// selection), so it needs a distinct hash salt. Layer mode intentionally stays
+// byte-compatible with vanilla Stockfish.
+inline constexpr std::uint32_t StackModeHashSalt = UsesFixedBucket ? 0x61E90A17u : 0u;
+
 // Version of the evaluation file
-constexpr std::uint32_t Version = 0x7AF32F21u;
+constexpr std::uint32_t Version = 0x7AF32F20u;
 
 // Constant used in evaluation value calculation
 constexpr int OutputScale     = 16;

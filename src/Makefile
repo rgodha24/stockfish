@@ -188,6 +188,20 @@ lsx = no
 lasx = no
 STRIP = strip
 
+### Stack mode for big-net bucket selection (layer | moe | none)
+STACKS ?= layer
+ifeq ($(filter $(STACKS),moe layer none),)
+    $(error Invalid STACKS=$(STACKS). Must be moe, layer, or none)
+endif
+
+ifeq ($(STACKS),moe)
+    CXXFLAGS += -DNNUE_STACKS_MOE
+else ifeq ($(STACKS),layer)
+    CXXFLAGS += -DNNUE_STACKS_LAYER
+else
+    CXXFLAGS += -DNNUE_STACKS_NONE
+endif
+
 ifneq ($(shell which clang-format-20 2> /dev/null),)
 	CLANG-FORMAT = clang-format-20
 else
@@ -1094,7 +1108,7 @@ universalclean:
 
 # evaluation network (nnue)
 net:
-	@$(SHELL) ../scripts/net.sh
+	@STACKS="$(STACKS)" $(SHELL) ../scripts/net.sh
 
 format:
 	$(CLANG-FORMAT) -i $(SRCS) $(OTHER_SRCS) $(HEADERS) -style=file
@@ -1136,6 +1150,7 @@ config-sanity: net
 	echo "lsx: '$(lsx)'" && \
 	echo "lasx: '$(lasx)'" && \
 	echo "target_windows: '$(target_windows)'" && \
+	echo "stacks: '$(STACKS)'" && \
 	echo "" && \
 	echo "Flags:" && \
 	echo "CXX: $(CXX)" && \
@@ -1169,6 +1184,7 @@ config-sanity: net
 	(test "$(neon)" = "yes" || test "$(neon)" = "no") && \
 	(test "$(lsx)" = "yes" || test "$(lsx)" = "no") && \
 	(test "$(lasx)" = "yes" || test "$(lasx)" = "no") && \
+	(test "$(STACKS)" = "moe" || test "$(STACKS)" = "layer" || test "$(STACKS)" = "none") && \
 	(test "$(comp)" = "gcc" || test "$(comp)" = "icx" || test "$(comp)" = "mingw" || \
 	 test "$(comp)" = "clang" || test "$(comp)" = "armv7a-linux-androideabi16-clang" || \
 	 test "$(comp)" = "aarch64-linux-android21-clang")
@@ -1296,7 +1312,7 @@ $(TEMP_DIR):
 
 # Download nnue files once in src/ (reused by every sub-arch via --embed-dir).
 $(NET_SENTINEL): | $(TEMP_DIR)
-	@cd $(CURDIR) && $(SHELL) ../scripts/net.sh
+	@cd $(CURDIR) && STACKS="$(STACKS)" $(SHELL) ../scripts/net.sh
 	@touch $@
 
 $(NNUE_EMBED_OBJ): $(UNIVERSAL_SRC_DIR)/nnue_embed.cpp $(NET_SENTINEL) | $(TEMP_DIR)
